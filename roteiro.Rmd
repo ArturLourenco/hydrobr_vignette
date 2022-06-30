@@ -1,0 +1,300 @@
+---
+title: "Pacote HidrowebR: Roteiro de uso"
+author: "Galera"
+date: '2022-04-30'
+output:
+  html_document: default
+  pdf_document: default
+subtitle: "Aquisição automatizada,pré e pós processamento dos dados disponibilizados pela HidroWEB - ANA"
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+gc(TRUE)
+rm(list = ls())
+dev.off()
+cat("\014")
+
+```
+
+```{r packages, include=FALSE}
+
+list.of.packages <-
+  c(
+    "colorRamps",
+    "knitr",
+    "magrittr",
+    "ggplot2",
+    "zoo",
+    "RColorBrewer",
+    "ggrepel",
+    "sf",
+    "rgeos",
+    "ggforce",
+    "scales",
+    "lubridate",
+    "tidyverse",
+    "purrr",
+    "timeDate",
+    "leaflet",
+    "ggpmisc",
+    "rvest",
+    "xml2",
+    "reshape2",
+    "XML",
+    "padr",
+    "stringr",
+    "hydroTSM",
+    "randtests",
+    "Kendall",
+    "trend",
+    "lfstat",
+    "geobr"
+    
+    
+  ) # lista de pacotes utilizados
+
+new.packages <-
+  list.of.packages[!(list.of.packages %in% installed.packages()[, "Package"])] # checar se h? algum pacote novo
+
+if (length(new.packages))
+  install.packages(new.packages) # instala os pacotes novos
+
+lapply(list.of.packages, require, character.only = TRUE) # carrega os pacotes necess?rios
+
+sf_use_s2(FALSE) #TODO
+
+source("G:/My Drive/R/Hidroweb_Data_Process/2022/Roteiro/00_funcoes_11_02_2021.R")
+
+setwd("G:/My Drive/R/Hidroweb_Data_Process/2022") #define a pasta de trabalho
+
+
+```
+
+```{r visual, echo = FALSE}
+
+knitr::include_graphics("G:/My Drive/R/Hidroweb_Data_Process/2022/visualroteiro.png")
+
+```
+
+## 1 Introdução
+
+Este roteiro tem como objetivo apresentar as funcionalidades do pacote em desenvolvimento hidrowebr. Será apresentado o uso prático das funções desenvolvidas para pré e pós-processamento dos dados hidrológicos fornecidos pela ANA. A funções compreendem desde a aquisição automátizada dos dados até o preenchimento de falhas.
+
+## 2 Área Estudo de Caso
+
+Para exemplificar o uso das funções do pacote, foi escolhida a bacia hidrográfica do rio **Piancó-Piranhas-Açu**, porção localizada no estado da Paraíba. A bacia pode ser vizualizada abaixo.
+
+```{r areaestudo, echo = FALSE }
+
+areaEstudo = st_read("G:\\My Drive\\R\\Hidroweb_Data_Process\\2022\\piancopiranhas.shp") %>% 
+  select(geometry)
+
+areaEstudo = st_transform(areaEstudo, crs = "WGS84")
+
+leaflet(data = areaEstudo) %>%
+  addTiles() %>%
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  addPolygons( popup = ~as.character("Bacia Piancó-Piranhas-Açu"), label = ~as.character("Bacia Piancó-Piranhas-Açu"),group = "Bacia Piancó-Piranhas-Açu") %>%
+  addLayersControl(
+    overlayGroups = c("Bacia Piancó-Piranhas-Açu"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>%
+  addMiniMap()
+
+```
+
+## 3 Download dos fluviométricos
+
+Neste exemplo, iremos realizar o download dos dados das estações fluviométrica disponíveis para a bacia. Primeiro iremos encontrar quais estados estão presentes nos limites da bacia. 
+
+```{r estados, echo=FALSE}
+
+estados = read_state(code_state = "all",
+           year = 2017,
+           simplified = TRUE,
+           showProgress = TRUE) %>% 
+  st_transform(crs = "WGS84") %>% 
+  st_intersection(areaEstudo) %>%
+  as_tibble() %>%
+  select(name_state) %>%
+  apply(2,toupper) %>%
+  as.vector()
+
+head(estados)
+
+```
+
+::: {.alert .alert-warning}
+<strong>Note!</strong> Devido diferenças entre o limites dos vetores da bacia e dos estados, a função pode retornar estados não presentes na bacia trazendo estações fora da área de estudo.
+:::
+
+### 3.1 Obtendo o iventário de estações para a área de estudo
+
+Agora iremos utilizar a função `inventory` para realizar o download do iventário de estações para área de estudo. Abaixo uma amostra das estações encontradas.
+
+```{r iventario, echo=FALSE}
+
+invEstFlu = inventory(estados, stationType = "flu")
+
+invEstFlu = invEstFlu %>% 
+  st_as_sf(coords = c("long", "lat"), crs = "WGS84") %>% 
+  st_intersection(areaEstudo)
+
+head(invEstFlu)
+
+```
+
+Agora é possível vizualizar as estações fluviométricas presentes na bacia.
+
+
+```{r maparea, echo=FALSE}
+
+
+leaflet(data = areaEstudo) %>%
+  addTiles() %>%
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  addPolygons( popup = ~as.character("Bacia Piancó-Piranhas-Açu"), label = ~as.character("Bacia   Piancó-Piranhas-Açu"),group = "Bacia Piancó-Piranhas-Açu") %>%
+    addCircleMarkers(
+    data = invEstFlu,
+    label = ~ station_code,
+    fillColor = "red",
+    fillOpacity = 1,
+    stroke = TRUE,
+    weight = 3,
+    radius = 4,
+    color = "black",
+    group = "Estações Fluviométricas") %>%
+  addLayersControl(
+    overlayGroups = c("Bacia Piancó-Piranhas-Açu","Estações Fluviométricas"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>%
+  addMiniMap()
+
+
+```
+
+::: {.alert .alert-warning}
+<strong>Note!</strong> No download do iventário estarão presentes todas as estações disponíveis no sitema HidroWEB, isso incluem estações desativadas e sem dados.
+:::
+
+### 3.2 Aquisição automatizada dos dados
+
+O próximo passo é utilizar a função `stationsData` para realizar o download de todas as séries de vazão disponíveis para cada estação obtida no iventário. Neste exemplo utilizamos o argumento padrão da função `deleteNAstations = TRUE` para realizar a remoção automática de estações sem dados.
+
+Abaixo os códigos  das estações com dados presentes e uma amostra dos dados para a estação de código 37413000.
+
+
+```{r stationsData, echo=FALSE}
+
+dadosFlu = stationsData(invEstFlu)
+names(dadosFlu)
+head(dadosFlu[[1]])
+# View(head(dadosFlu[[1]])) 
+
+
+```
+
+### 3.3 Limpar e organizar os dados
+
+O sistema HidroWEB trás diversos dados para cada estação fluviométrica além da vazão e da data de medição. Os dados das estações também estão estruturados no formato conhecido como wide. Nessa estrutura cada linha representa uma estação e todos os outros dados estão em colunas como foi apresentado no tópico anterior.
+
+Iremos utilizar a função `organize` para remover algumas informações as quais julgamos desnecessárias e mudar a estrutura dos dados para long. No formato long os dados de vazão diária estarão em linhas, este formato facilita a utilização em diversas aplicações sobre estudos hidrológicos. É possível verificar uma amostra dos dados organizados abaixo bem como o mapa das estações com dados presentes.
+
+```{r organize, echo=FALSE}
+
+dadosFluSerie = organize(dadosFlu)
+dadosFluSerie[[1]]
+
+leaflet(data = areaEstudo) %>%
+  addTiles() %>%
+  addProviderTiles(providers$Esri.WorldImagery) %>%
+  addPolygons( popup = ~as.character("Bacia Piancó-Piranhas-Açu"), label = ~as.character("Bacia   Piancó-Piranhas-Açu"),group = "Bacia Piancó-Piranhas-Açu") %>%
+    addCircleMarkers(
+    data = invEstFlu[invEstFlu[[2]] %in% names(dadosFluSerie),],
+    label = ~ station_code,
+    fillColor = "red",
+    fillOpacity = 1,
+    stroke = TRUE,
+    weight = 3,
+    radius = 4,
+    color = "black",
+    group = "Estações Fluviométricas") %>%
+  addLayersControl(
+    overlayGroups = c("Bacia Piancó-Piranhas-Açu","Estações Fluviométricas"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>%
+  addMiniMap()
+
+```
+
+## 4 Vizualização dos dados
+
+Após a utilização da função `organize`, é possível utilizar a função `mMonthlyPlot` para visualizar os dados das estações. A função `mMonthlyPlot` converte os dados diários de vazão para as médias mensais para apresentação gráfica. Além disso, é possível nos argumentos aplicar um filtro nas estações baseado na porcentagem de falhas, tamanho da série e consistência dos dados.
+
+O objetivo desta função é fornecer uma primeira visualização dos dados obtidos. No gráfico abaixo são apresentadas as séries com um filtro com percentagem máxima de 5 de falhas e série mínima com 10 anos. 
+
+```{r mMonthlyPlot1, echo=FALSE}
+
+mMonthlyPlot(organizeResult = dadosFluSerie, 
+             maxFailurePorcent = 5, 
+             minimalYears = 10, 
+             consistedOnly = TRUE)
+
+```
+
+Neste novo gráfico foi aplicado um filtro para uma série mínima de 10 anos.
+
+
+```{r mMonthlyPlot, echo=FALSE}
+
+mMonthlyPlot(organizeResult = dadosFluSerie, 
+             maxFailurePorcent = 5, 
+             minimalYears = 20, 
+             consistedOnly = TRUE)
+
+```
+
+## 5 Selecionar e filtrar dados
+
+Para selecionar e filtrar as estações foi desenvolvida a função `selectStations`. Nesta função o usuário pode aplicar um filtro nas estações nos modos mensais e anuais. Também é possível definir outros parâmetros para a filtragem das estações como porcentagem máxima de falhas, número mínimo de anos.
+
+Na figura abaixo definimos as estações com o máximo de um por cento de falhas no modo anual.
+
+```{r  selectStations, echo=FALSE}
+
+dadosFluSelect = selectStations(dados = dadosFluSerie,
+                             mode = "yearly",
+                             maxFailurePorcent = 5,
+                             minimalYears = 10,
+                             month = "Jan",
+                             inicialYear = NULL, #initial consertar
+                             finalYear = 2021,
+                             consistedOnly = FALSE)
+
+```
+
+::: {.alert .alert-warning}
+<strong>Note!</strong> É importante verificar a data inicial e final das séries contidas nas estações bem como a escolha do ano hidrológico.
+:::
+
+## 6 Preenchimento de falhas
+
+É possível utilizar as funções `flowStatistics` e `fillGaps` para realizar o prenchimento de falhas. Abaixo é apresentado o resultado para o preenchimento de falhas da série de dados selecionados anteriormente utilizando a vazão média com uma correlação mínima de **0.85** e mínimo de 5 estações pares.
+
+```{r}
+
+dfMean = flowStatistics(list = dadosFluSelect, statistics = "Qmean")
+
+dfFillmean = fillGaps(lista = dfMean, minimumCor = 0.75, minimunObsPairs = 4)
+
+```
+
+## Referencias
+
+
